@@ -76,7 +76,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
 };
-use toml::value::Value;
+use toml_edit::easy::Value;
 
 #[derive(Debug, Clone)]
 struct PatchEntry {
@@ -137,7 +137,7 @@ fn get_patches(package: &Package) -> Vec<PatchEntry> {
     manifest
         .custom_metadata()
         .and_then(|v| v.get("patch"))
-        .and_then(Value::as_table)
+        .and_then(|v| v.as_table())
         .map_or_else(Vec::new, |v| {
             v.iter()
                 .filter_map(|(k, v)| parse_patch_entry(k, v))
