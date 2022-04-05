@@ -86,8 +86,13 @@ struct PatchEntry {
     version: Option<VersionReq>,
     patches: Vec<PathBuf>,
 }
+
 const RANGE_REGEX: &str = r"(?m)^(?P<rangeBegin>@@ -[0-9]+,[0-9]+ \+[0-9]+)(?P<rangeEnd>,[0-9]+)? @@.*\n";
 const RANGE_REPLACE: &str = "$rangeBegin$rangeEnd @@\n";
+
+// lines that do not begin with '-+\s@'
+const PATCH_REGEX: &str = r"(?m)^[^-\+\s@].*\n";
+const PATCH_REPLACE: &str = "";
 
 #[allow(clippy::wildcard_enum_match_arm)]
 fn clear_patch_folder() -> Result<()> {
@@ -229,10 +234,12 @@ fn copy_package(pkg: &Package) -> Result<PathBuf> {
 }
 
 fn apply_patches(name: &str, patches: &[PathBuf], path: &Path) -> Result<()> {
-    let regex = Regex::new(RANGE_REGEX)?;
+    let range = Regex::new(RANGE_REGEX)?;
+    let extra = Regex::new(PATCH_REGEX)?;
     for patch in patches {
         let data = read_to_string(patch)?;
-        let data = regex.replace_all(&data, RANGE_REPLACE);
+        let data = range.replace_all(&data, RANGE_REPLACE);
+        let data = extra.replace_all(&data, PATCH_REPLACE);
         let patches = Patch::from_multiple(&data)
             .map_err(|_| err_msg("Unable to parse patch file").compat())?;
         for patch in patches {
@@ -338,7 +345,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_patch, RANGE_REGEX, RANGE_REPLACE};
+    use super::{apply_patch, RANGE_REGEX, RANGE_REPLACE, PATCH_REGEX, PATCH_REPLACE};
     use patch::Patch;
     use regex::Regex;
 
@@ -535,6 +542,7 @@ id est laborum.
 \n@@ -11,3 +1 @@ 123 
 @@ -2,7 +2,7 @@ 
 "#;
+        
         let regex = Regex::new(RANGE_REGEX).expect("Failed to parse regex");
         let data = regex.replace_all(patch, RANGE_REPLACE);
         let patches = Patch::from_multiple(&data).expect("Unable to parse patch");
@@ -543,5 +551,71 @@ id est laborum.
             test_patched.push_str(&apply_patch(patch, content));
         }
         assert_eq!(patched, test_patched, "Patched content does not match");
+    }
+    
+    #[test]
+    fn test_unsuported_patch_features(){
+        let patch = r#"
+Some such patch commentary about things
+that does stuff at places. 
+
+diff --git a/test.txt b/test.txt
+deleted file mode 100644
+index d2c436c..0000000
+--- a/test.txt
++++ /dev/null
+@@ -1,13 +0,0 @@
+-Lorem ipsum dolor sit amet, consectetur
+-adipiscing elit, sed do eiusmod tempor
+-incididunt ut labore et dolore magna
+-aliqua. Ut enim ad minim veniam, quis
+-nostrud exercitation ullamco laboris
+-nisi ut aliquip ex ea commodo consequat.
+-Duis aute irure dolor in reprehenderit
+-in voluptate velit esse cillum dolore
+-eu fugiat nulla pariatur. Excepteur sint
+-occaecat cupidatat non proident, sunt in
+-culpa qui officia deserunt mollit anim
+-id est laborum.
+-Some such extra line.
+diff --git a/test2.txt b/test2.txt
+new file mode 100644
+index 0000000..5271a52
+--- /dev/null
++++ b/test2.txt
+@@ -0,0 +1 @@
++test123
+diff --git a/thing3.txt b/thing3.txt
+new file mode 100644
+index 0000000..e69de29
+"#; // TODO: empty new files are unsupported
+        let replaced_patch = r#"
+
+--- a/test.txt
++++ /dev/null
+@@ -1,13 +0,0 @@
+-Lorem ipsum dolor sit amet, consectetur
+-adipiscing elit, sed do eiusmod tempor
+-incididunt ut labore et dolore magna
+-aliqua. Ut enim ad minim veniam, quis
+-nostrud exercitation ullamco laboris
+-nisi ut aliquip ex ea commodo consequat.
+-Duis aute irure dolor in reprehenderit
+-in voluptate velit esse cillum dolore
+-eu fugiat nulla pariatur. Excepteur sint
+-occaecat cupidatat non proident, sunt in
+-culpa qui officia deserunt mollit anim
+-id est laborum.
+-Some such extra line.
+--- /dev/null
++++ b/test2.txt
+@@ -0,0 +1 @@
++test123
+"#;
+        let regex = Regex::new(PATCH_REGEX).expect("Failed to get regex");
+        let data = regex.replace_all(patch, PATCH_REPLACE);
+        assert_eq!(data, replaced_patch, "Unsupported features or extra context present");
+        // ensure it still parses
+        let _ = Patch::from_multiple(&data).expect("Could not parse");
     }
 }
