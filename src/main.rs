@@ -76,7 +76,9 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
 };
+
 use toml_edit::easy::Value;
+use regex::Regex;
 
 #[derive(Debug, Clone)]
 struct PatchEntry {
@@ -84,6 +86,8 @@ struct PatchEntry {
     version: Option<VersionReq>,
     patches: Vec<PathBuf>,
 }
+const RANGE_REGEX: &str = r"(?m)^(?P<rangeBegin>@@ -[0-9]+,[0-9]+ \+[0-9]+)(?P<rangeEnd>,[0-9]+)? @@.*\n";
+const RANGE_REPLACE: &str = "$rangeBegin$rangeEnd @@\n";
 
 #[allow(clippy::wildcard_enum_match_arm)]
 fn clear_patch_folder() -> Result<()> {
@@ -225,8 +229,10 @@ fn copy_package(pkg: &Package) -> Result<PathBuf> {
 }
 
 fn apply_patches(name: &str, patches: &[PathBuf], path: &Path) -> Result<()> {
+    let regex = Regex::new(RANGE_REGEX)?;
     for patch in patches {
         let data = read_to_string(patch)?;
+        let data = regex.replace_all(&data, RANGE_REPLACE);
         let patches = Patch::from_multiple(&data)
             .map_err(|_| err_msg("Unable to parse patch file").compat())?;
         for patch in patches {
@@ -332,8 +338,9 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_patch;
+    use super::{apply_patch, RANGE_REGEX, RANGE_REPLACE};
     use patch::Patch;
+    use regex::Regex;
 
     #[test]
     fn apply_patch_simply() {
@@ -430,6 +437,111 @@ test3
 "#;
         let patch = Patch::from_single(patch).expect("Unable to parse patch");
         let test_patched = apply_patch(patch, content);
+        assert_eq!(patched, test_patched, "Patched content does not match");
+    }
+
+        #[test]
+    fn apply_patch_regex() {
+        let patch = r#"--- test1	2020-05-22 17:30:38.119170176 +0200
++++ test2	2020-05-22 17:30:48.905935473 +0200
+@@ -2,8 +2,7 @@ Lorem ipsum dolor sit amet, consectetur 
+ adipiscing elit, sed do eiusmod tempor 
+ incididunt ut labore et dolore magna 
+ aliqua. Ut enim ad minim veniam, quis 
+-nostrud exercitation ullamco laboris 
+-nisi ut aliquip ex ea commodo consequat. 
++PATCHED
+ Duis aute irure dolor in reprehenderit 
+ in voluptate velit esse cillum dolore 
+ eu fugiat nulla pariatur. Excepteur sint 
+"#;
+        let content = r#"Lorem ipsum dolor sit amet, consectetur 
+adipiscing elit, sed do eiusmod tempor 
+incididunt ut labore et dolore magna 
+aliqua. Ut enim ad minim veniam, quis 
+nostrud exercitation ullamco laboris 
+nisi ut aliquip ex ea commodo consequat. 
+Duis aute irure dolor in reprehenderit 
+in voluptate velit esse cillum dolore 
+eu fugiat nulla pariatur. Excepteur sint 
+occaecat cupidatat non proident, sunt in 
+culpa qui officia deserunt mollit anim 
+id est laborum.
+"#;
+        let patched = r#"Lorem ipsum dolor sit amet, consectetur 
+adipiscing elit, sed do eiusmod tempor 
+incididunt ut labore et dolore magna 
+aliqua. Ut enim ad minim veniam, quis 
+PATCHED
+Duis aute irure dolor in reprehenderit 
+in voluptate velit esse cillum dolore 
+eu fugiat nulla pariatur. Excepteur sint 
+occaecat cupidatat non proident, sunt in 
+culpa qui officia deserunt mollit anim 
+id est laborum.
+"#;
+        let regex = Regex::new(RANGE_REGEX).expect("Failed to parse regex");
+        let data = regex.replace_all(patch, RANGE_REPLACE);
+        let patch = Patch::from_single(&data).expect("Unable to parse patch");
+        let test_patched = apply_patch(patch, content);
+        assert_eq!(patched, test_patched, "Patched content does not match");
+    }
+
+    #[test]
+    fn apply_multiple_patches_regex() {
+        let patch = r#"--- test1	2020-05-22 17:30:38.119170176 +0200
++++ test2	2020-05-22 17:30:48.905935473 +0200
+@@ -2,7 +2,7 @@ \n@@ -11,3 +11,4 @@ 
+ adipiscing elit, sed do eiusmod tempor 
+ incididunt ut labore et dolore magna 
+ aliqua. Ut enim ad minim veniam, quis 
+-nostrud exercitation ullamco laboris
++PATCHED 
+ nisi ut aliquip ex ea commodo consequat. 
+ Duis aute irure dolor in reprehenderit 
+ in voluptate velit esse cillum dolore 
+@@ -11,3 +11,4 @@ occaecat cupidatat non proident, sunt in 
+ culpa qui officia deserunt mollit anim 
+ id est laborum.
+ \n@@ -11,3 +1,1 @@ 123 
++@@ -2,7 +2,7 @@ 
+"#;
+        let content = r#"\n@@ -11,3 +11,4 @@ 
+adipiscing elit, sed do eiusmod tempor 
+incididunt ut labore et dolore magna 
+aliqua. Ut enim ad minim veniam, quis 
+nostrud exercitation ullamco laboris 
+nisi ut aliquip ex ea commodo consequat. 
+Duis aute irure dolor in reprehenderit 
+in voluptate velit esse cillum dolore 
+eu fugiat nulla pariatur. Excepteur sint 
+occaecat cupidatat non proident, sunt in 
+culpa qui officia deserunt mollit anim 
+id est laborum. 
+\n@@ -11,3 +1 @@ 123 
+"#;
+        let patched = r#"\n@@ -11,3 +11,4 @@ 
+adipiscing elit, sed do eiusmod tempor 
+incididunt ut labore et dolore magna 
+aliqua. Ut enim ad minim veniam, quis 
+PATCHED 
+nisi ut aliquip ex ea commodo consequat. 
+Duis aute irure dolor in reprehenderit 
+in voluptate velit esse cillum dolore 
+eu fugiat nulla pariatur. Excepteur sint 
+occaecat cupidatat non proident, sunt in 
+culpa qui officia deserunt mollit anim 
+id est laborum. 
+\n@@ -11,3 +1 @@ 123 
+@@ -2,7 +2,7 @@ 
+"#;
+        let regex = Regex::new(RANGE_REGEX).expect("Failed to parse regex");
+        let data = regex.replace_all(patch, RANGE_REPLACE);
+        let patches = Patch::from_multiple(&data).expect("Unable to parse patch");
+        let mut test_patched = String::from("");
+        for patch in patches {
+            test_patched.push_str(&apply_patch(patch, content));
+        }
         assert_eq!(patched, test_patched, "Patched content does not match");
     }
 }

@@ -182,6 +182,7 @@ dependencies = [
  "failure",
  "fs_extra",
  "patch",
+ "regex",
  "semver",
  "toml_edit",
 ]
